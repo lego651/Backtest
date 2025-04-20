@@ -1,0 +1,29 @@
+//@version=5
+strategy("Benchmark Buy and Hold Strategy", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// === Parameters ===
+startDate = timestamp(2020, 01, 01, 00, 00)
+endDate   = timestamp(2024, 12, 31, 23, 59)
+
+// === Variables ===
+var float initialBalance = 10000.0
+var float entryPrice = na
+var float shares = na
+var bool positionOpened = false
+
+// === Entry Logic ===
+inDateRange = time >= startDate and time <= endDate
+
+if not positionOpened and time >= startDate
+    entryPrice := close
+    shares := initialBalance / entryPrice
+    strategy.entry("Buy", strategy.long, qty=shares)
+    positionOpened := true
+
+// === Exit on end date ===
+if time >= endDate
+    strategy.close_all()
+
+// === Plot Portfolio Value ===
+currentBalance = shares * close
+plot(inDateRange ? currentBalance : na, "Current Balance", color=color.blue)
