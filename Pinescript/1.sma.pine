@@ -1,0 +1,23 @@
+//@version=5
+strategy("100 SMA Trend-Following Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// === 用户参数 ===
+ma_period = input.int(100, title="SMA Period")
+start_date = input.time(timestamp("2020-01-01 00:00 UTC"), title="Start Date")
+end_date   = input.time(timestamp("2024-12-31 23:59 UTC"), title="End Date")
+
+// === 策略逻辑 ===
+sma = ta.sma(close, ma_period)
+in_date_range = time >= start_date and time <= end_date
+long_condition = in_date_range and close > sma
+
+// === 开仓逻辑：仅当价格在SMA上方且当前无持仓时开多单
+if long_condition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+// === 平仓逻辑：跌破SMA时平仓
+if in_date_range and close < sma and strategy.position_size > 0
+    strategy.close("Long")
+
+// === 绘图
+plot(sma, title="100 SMA", color=color.orange, linewidth=2)
