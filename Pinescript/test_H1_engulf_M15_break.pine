@@ -1,0 +1,61 @@
+//@version=5
+strategy("Engulfing Breakout (Long Only)", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+
+ny = "America/New_York"
+
+// === Pull H1 data via request.security
+h1_open   = request.security(syminfo.tickerid, "60", open)
+h1_close  = request.security(syminfo.tickerid, "60", close)
+h1_high   = request.security(syminfo.tickerid, "60", high)
+h1_low    = request.security(syminfo.tickerid, "60", low)
+h1_time   = request.security(syminfo.tickerid, "60", time)
+
+// Previous H1 candle values
+h1_open_prev  = request.security(syminfo.tickerid, "60", open[1])
+h1_close_prev = request.security(syminfo.tickerid, "60", close[1])
+h1_low_prev   = request.security(syminfo.tickerid, "60", low[1])
+
+// === Detect 7AM–10AM New York H1 candles
+h1_hour_ny = hour(h1_time, ny)
+inEngulfWindow = (h1_hour_ny >= 7 and h1_hour_ny < 10)
+
+// === Bullish Engulfing Criteria
+isEngulf = h1_low < h1_low_prev and h1_close > math.max(h1_open_prev, h1_close_prev)
+
+// === Reset once per day
+newDay = ta.change(time("D")) != 0
+var bool foundTodayEngulf = false
+if newDay
+    foundTodayEngulf := false
+
+// === Track Engulfing Range
+var float rangeHigh = na
+var float rangeLow = na
+var int rangeBarIndex = na
+
+if isEngulf and inEngulfWindow and not foundTodayEngulf
+    rangeHigh := h1_high
+    rangeLow := h1_low
+    rangeBarIndex := bar_index
+    foundTodayEngulf := true
+
+// === Entry Logic on 15m: Breakout candle closes above range high
+validRange = not na(rangeHigh) and bar_index > rangeBarIndex
+bodyBreakout = close > rangeHigh and open <= rangeHigh
+
+// === Risk Management
+sl = rangeLow
+tp = close + (close - sl)
+
+// === Execute trade
+if validRange and bodyBreakout
+    strategy.entry("Long", strategy.long)
+    strategy.exit("TP/SL", from_entry="Long", stop=sl, limit=tp)
+
+    // Draw TP/SL lines
+    line.new(x1=bar_index, y1=sl, x2=bar_index + 5, y2=sl, color=color.red, width=1)
+    line.new(x1=bar_index, y1=tp, x2=bar_index + 5, y2=tp, color=color.green, width=1)
+
+// === Plot range lines
+plot(validRange ? rangeHigh : na, title="Range High", color=color.orange, linewidth=1)
+plot(validRange ? rangeLow : na, title="Range Low", color=color.orange, linewidth=1)
