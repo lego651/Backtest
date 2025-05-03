@@ -1,0 +1,80 @@
+//@version=5
+strategy("Opening Range Breakout (Long)", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+
+// === Time Filter for Last Month ===
+daysBack = 30
+startDate = timenow - daysBack * 24 * 60 * 60 * 1000  // 30 days in milliseconds
+inLast30Days = time >= startDate
+
+marketOpen = timestamp("Europe/London", year, month, dayofmonth, 9, 0)
+latestEntry = timestamp("Europe/London", year, month, dayofmonth, 12, 0)
+openingRangeStart = timestamp("Europe/London", year, month, dayofmonth, 4, 0)
+
+inOpeningRange = (time >= openingRangeStart and time < marketOpen)
+isMarketOpen = (time >= marketOpen and time <= latestEntry)
+
+// Track daily opening range
+var float orHigh = na
+var float orLow = na
+newDay = ta.change(time("D")) != 0
+
+if inOpeningRange
+    orHigh := na(orHigh) ? high : math.max(orHigh, high)
+    orLow := na(orLow) ? low : math.min(orLow, low)
+    
+if newDay
+    orHigh := na
+    orLow := na
+
+// ATR
+atr = ta.atr(14)
+
+// Entry Conditions
+condBreakout = close > orHigh and open <= orHigh
+condATRFilter = (high - low) < atr * 2.5 and (high - low) > atr * 1.0
+entryCond = condBreakout and condATRFilter and isMarketOpen and not na(orHigh)
+
+// SL & TP
+nominalStop = open - orLow
+slPrice = open - (nominalStop * 1.0)
+tpPrice = open + ((open - slPrice) * 1.5)
+
+// Execute Long Trade
+if entryCond and inLast30Days
+    strategy.entry("Long", strategy.long, comment="OR Breakout")
+    strategy.exit("Exit", from_entry="Long", stop=slPrice, limit=tpPrice)
+
+    // Draw horizontal SL and TP lines
+    line.new(x1=bar_index, y1=slPrice, x2=bar_index + 10, y2=slPrice, color=color.red, width=2, style=line.style_solid)
+    line.new(x1=bar_index, y1=tpPrice, x2=bar_index + 10, y2=tpPrice, color=color.green, width=2, style=line.style_solid)
+
+
+// === DRAW OPENING RANGE LINES (FOR EACH DAY) ===
+boxStart = timestamp("Europe/London", year, month, dayofmonth, 4, 0)
+boxEnd   = timestamp("Europe/London", year, month, dayofmonth, 9, 0)
+
+inBoxWindow = time >= boxStart and time < boxEnd
+endOfBox = time == boxEnd
+
+var int startIdx = na
+var int endIdx = na
+
+if inBoxWindow and na(startIdx)
+    startIdx := bar_index
+if endOfBox
+    endIdx := bar_index
+
+// Arrays to store lines per day
+var line[] topLines = array.new<line>()
+var line[] bottomLines = array.new<line>()
+
+// Draw per-day box lines after 9:00am
+if not na(startIdx) and not na(endIdx) and not na(orHigh) and not na(orLow)
+    l1 = line.new(x1=startIdx, y1=orHigh, x2=endIdx, y2=orHigh, color=color.blue, width=2)
+    l2 = line.new(x1=startIdx, y1=orLow, x2=endIdx, y2=orLow, color=color.blue, width=2)
+    array.push(topLines, l1)
+    array.push(bottomLines, l2)
+
+    // reset for next day
+    startIdx := na
+    endIdx := na
