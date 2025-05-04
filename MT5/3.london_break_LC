@@ -1,0 +1,114 @@
+//+------------------------------------------------------------------+
+//| Opening Range Breakout EA - Long Only - Adjusted for GMT+3      |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+CTrade trade;
+
+// === Inputs ===
+input double   RiskPerTradeUSD = 1000.0;     // Fixed $ risk
+input double   RRRatio         = 1.5;        // Reward-to-risk
+input int      ATRPeriod       = 14;
+input ENUM_TIMEFRAMES TF       = PERIOD_H1;
+
+// === Globals ===
+double rangeHigh   = -1;
+double rangeLow    = -1;
+bool   tradePlaced = false;
+int    atrHandle;
+
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   atrHandle = iATR(_Symbol, TF, ATRPeriod);
+   if(atrHandle == INVALID_HANDLE)
+     {
+      Print("Failed to create ATR handle");
+      return(INIT_FAILED);
+     }
+
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+
+   // === Adjust server time to London time ===
+   int londonHour = (tm.hour - 3 + 24) % 24;
+
+   // Reset at start of new London day
+   static int lastDay = -1;
+   if(tm.day != lastDay)
+     {
+      lastDay = tm.day;
+      rangeHigh = -1;
+      rangeLow = -1;
+      tradePlaced = false;
+     }
+
+   // === Build Opening Range: 4:00 – 9:00 London ===
+   if(londonHour >= 4 && londonHour < 9)
+     {
+      double h = iHigh(_Symbol, TF, 0);
+      double l = iLow(_Symbol, TF, 0);
+      if(rangeHigh == -1 || h > rangeHigh) rangeHigh = h;
+      if(rangeLow == -1 || l < rangeLow) rangeLow = l;
+     }
+
+   // === Entry Window: 9:00 – 12:00 London ===
+   if(!tradePlaced && londonHour >= 9 && londonHour < 12 && rangeHigh > 0 && rangeLow > 0)
+     {
+      double close = iClose(_Symbol, PERIOD_CURRENT, 1);
+      double open  = iOpen(_Symbol, PERIOD_CURRENT, 1);
+      double high  = iHigh(_Symbol, PERIOD_CURRENT, 1);
+      double low   = iLow(_Symbol, PERIOD_CURRENT, 1);
+      double candleRange = high - low;
+
+      // === Get ATR
+      double atrBuffer[];
+      if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) <= 0)
+         return;
+      double atr = atrBuffer[0];
+
+      // === Entry Conditions
+      bool breakout = (close > rangeHigh && open <= rangeHigh);
+      bool atrValid = (candleRange > atr * 1.0 && candleRange < atr * 2.5);
+
+      if(breakout && atrValid)
+        {
+         double sl = rangeLow;
+         double entryPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+         double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+         double riskPerLot = entryPrice - sl;
+
+         if(riskPerLot <= 0 || tickValue <= 0 || tickSize <= 0)
+            return;
+
+         // === Lot sizing
+         double dollarPerPoint = riskPerLot / tickSize * tickValue;
+         double lots = RiskPerTradeUSD / dollarPerPoint;
+
+         double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+         double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+         lots = MathMax(MathMin(NormalizeDouble(lots, 2), maxLot), minLot);
+
+         double tp = entryPrice + riskPerLot * RRRatio;
+
+         bool result = trade.Buy(lots, _Symbol, entryPrice, sl, tp, "OR Breakout Long");
+
+         if(result)
+           {
+            Print("✅ Trade placed @ ", entryPrice, " | SL: ", sl, " | TP: ", tp, " | Lots: ", lots);
+            tradePlaced = true;
+           }
+         else
+           {
+            Print("❌ Order failed: ", GetLastError());
+           }
+        }
+     }
+  }
