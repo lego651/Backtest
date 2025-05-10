@@ -1,0 +1,83 @@
+//@version=5
+strategy("Engulfing Breakout (Long Only, Bullish or Bearish Engulfing Defines Range)", overlay=true, default_qty_type=strategy.fixed, default_qty_value=0)
+
+// === Settings
+risk_per_trade = 1000
+reward_per_trade = 2000
+ny = "America/New_York"
+
+// === MTF H1 candle data
+h1_open   = request.security(syminfo.tickerid, "60", open)
+h1_close  = request.security(syminfo.tickerid, "60", close)
+h1_high   = request.security(syminfo.tickerid, "60", high)
+h1_low    = request.security(syminfo.tickerid, "60", low)
+h1_time   = request.security(syminfo.tickerid, "60", time)
+
+h1_open_prev  = request.security(syminfo.tickerid, "60", open[1])
+h1_close_prev = request.security(syminfo.tickerid, "60", close[1])
+h1_low_prev   = request.security(syminfo.tickerid, "60", low[1])
+h1_high_prev  = request.security(syminfo.tickerid, "60", high[1])
+
+// === Time filters
+h1_hour_ny = hour(h1_time, ny)
+bar_hour_ny = hour(time, ny)
+inH1Window = (h1_hour_ny >= 7 and h1_hour_ny < 10)
+beforeCutoff = bar_hour_ny < 14
+
+// === Engulfing logic (either bullish OR bearish)
+isBullish = h1_low < h1_low_prev and h1_close > math.max(h1_open_prev, h1_close_prev)
+isBearish = h1_high > h1_high_prev and h1_close < math.min(h1_open_prev, h1_close_prev)
+isEngulf = (isBullish or isBearish) and inH1Window
+
+// === Daily reset
+newDay = ta.change(time("D")) != 0
+var bool foundTodayEngulf = false
+var bool tradedToday = false
+var bool rangeUsed = false
+
+// === Define breakout range from the FIRST engulfing candle of the day
+var float rangeHigh = na
+var float rangeLow = na
+var int rangeBarIndex = na
+
+if newDay
+    foundTodayEngulf := false
+    tradedToday := false
+    rangeUsed := false
+    rangeHigh := na
+    rangeLow := na
+    rangeBarIndex := na
+
+
+
+if isEngulf and not foundTodayEngulf
+    rangeHigh := h1_high
+    rangeLow := h1_low
+    rangeBarIndex := bar_index
+    foundTodayEngulf := true
+
+// === Entry condition: breakout above the engulfing range high
+validRange = not na(rangeHigh) and not rangeUsed and bar_index > rangeBarIndex
+breakoutLong = close > rangeHigh and open <= rangeHigh
+entryLong = validRange and breakoutLong and not tradedToday and beforeCutoff
+
+// === Risk/reward setup
+sl = rangeLow
+risk = close - sl
+qty = risk > 0 ? risk_per_trade / risk : na
+tp = close + reward_per_trade / qty
+
+// === Execute trade
+if entryLong and not na(qty)
+    strategy.entry("Long", strategy.long, qty=qty)
+    strategy.exit("TP/SL", from_entry="Long", stop=sl, limit=tp)
+    tradedToday := true
+    rangeUsed := true
+
+    // Draw SL/TP lines
+    line.new(x1=bar_index, y1=sl, x2=bar_index + 5, y2=sl, color=color.red)
+    line.new(x1=bar_index, y1=tp, x2=bar_index + 5, y2=tp, color=color.green)
+
+// === Visualize range
+plot(validRange ? rangeHigh : na, title="Range High", color=color.orange, linewidth=1)
+plot(validRange ? rangeLow : na, title="Range Low", color=color.orange, linewidth=1)
