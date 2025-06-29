@@ -1,0 +1,76 @@
+//@version=5
+strategy("M5 Body Breakout (9:55–10:10 AM NY, $1K Risk)", overlay=true, default_qty_type=strategy.fixed, default_qty_value=0)
+
+risk_per_trade = 1000
+reward_per_trade = 2000
+ny = "America/New_York"
+
+// === Get New York time
+bar_hour_ny   = hour(time, ny)
+bar_minute_ny = minute(time, ny)
+
+// === Define the 9:55–10:10 AM New York window
+inRangeWindow     = (bar_hour_ny == 9 and bar_minute_ny >= 55) or (bar_hour_ny == 10 and bar_minute_ny <= 10)
+endOfRangeWindow  = (bar_hour_ny == 10 and bar_minute_ny == 10)
+afterWindow       = (bar_hour_ny > 10 or (bar_hour_ny == 10 and bar_minute_ny > 10))
+
+// === Daily reset
+newDay = ta.change(time("D"))
+var float rangeHigh = na
+var float rangeLow = na
+var bool rangeSet = false
+var bool tradedToday = false
+
+if newDay
+    rangeHigh := na
+    rangeLow := na
+    rangeSet := false
+    tradedToday := false
+
+// === Capture high/low from 9:55–10:10 AM
+if inRangeWindow
+    rangeHigh := na(rangeHigh) ? high : math.max(rangeHigh, high)
+    rangeLow := na(rangeLow) ? low : math.min(rangeLow, low)
+
+if endOfRangeWindow
+    rangeSet := true
+
+validToTrade = rangeSet and afterWindow and not tradedToday
+
+// === Entry Conditions: body close breakout
+bodyCloseOverHigh = close > rangeHigh and open <= rangeHigh
+bodyCloseBelowLow = close < rangeLow and open >= rangeLow
+
+// === Long Setup
+sl_long = rangeLow
+risk_long = close - sl_long
+qty_long = risk_long > 0 ? risk_per_trade / risk_long : na
+tp_long = close + reward_per_trade / qty_long
+
+if validToTrade and bodyCloseOverHigh and not na(qty_long)
+    strategy.entry("Long", strategy.long, qty=qty_long)
+    strategy.exit("TP/SL Long", from_entry="Long", stop=sl_long, limit=tp_long)
+    tradedToday := true
+    line.new(x1=bar_index, y1=sl_long, x2=bar_index + 5, y2=sl_long, color=color.red)
+    line.new(x1=bar_index, y1=tp_long, x2=bar_index + 5, y2=tp_long, color=color.green)
+
+// === Short Setup
+sl_short = rangeHigh
+risk_short = sl_short - close
+qty_short = risk_short > 0 ? risk_per_trade / risk_short : na
+tp_short = close - reward_per_trade / qty_short
+
+if validToTrade and bodyCloseBelowLow and not na(qty_short)
+    strategy.entry("Short", strategy.short, qty=qty_short)
+    strategy.exit("TP/SL Short", from_entry="Short", stop=sl_short, limit=tp_short)
+    tradedToday := true
+    line.new(x1=bar_index, y1=sl_short, x2=bar_index + 5, y2=sl_short, color=color.red)
+    line.new(x1=bar_index, y1=tp_short, x2=bar_index + 5, y2=tp_short, color=color.green)
+
+// === Visual: draw box over the range
+var box rangeBox = na
+if endOfRangeWindow
+    rangeBox := box.new(left=bar_index - 3, top=rangeHigh, right=bar_index, bottom=rangeLow, border_color=color.orange, bgcolor=color.orange, extend=extend.none)
+
+plot(not na(rangeHigh) and rangeSet ? rangeHigh : na, title="Range High", color=color.orange, linewidth=1)
+plot(not na(rangeLow) and rangeSet ? rangeLow : na, title="Range Low", color=color.orange, linewidth=1)
