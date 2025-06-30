@@ -1,0 +1,130 @@
+//+------------------------------------------------------------------+
+//| M5 Body Breakout EA (NY 9:55–10:10 Range, Box + Entry)           |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+CTrade trade;
+
+// === Inputs ===
+input double RiskPerTradeUSD = 1000.0;
+input double RRRatio         = 2.0;  // Reward-to-risk ratio
+input int    StartHour       = 16;   // NY 9:55 AM = 16:55 server time (GMT+3)
+input int    StartMinute     = 55;
+input int    EndHour         = 17;   // NY 10:10 AM = 17:10 server time
+input int    EndMinute       = 10;
+
+// === Globals ===
+datetime lastTradeDay = 0;
+double rangeHigh = -1;
+double rangeLow = -1;
+bool rangeSet = false;
+bool tradePlaced = false;
+
+//+------------------------------------------------------------------+
+int OnInit() {
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnTick() {
+   MqlDateTime tm, lastTm;
+   TimeToStruct(TimeCurrent(), tm);
+   TimeToStruct(lastTradeDay, lastTm);
+
+   int serverHour = tm.hour;
+   int serverMinute = tm.min;
+
+   // === Reset each new day ===
+   if (tm.day != lastTm.day || tm.mon != lastTm.mon || tm.year != lastTm.year) {
+      lastTradeDay = TimeCurrent();
+      rangeHigh = -1;
+      rangeLow = -1;
+      rangeSet = false;
+      tradePlaced = false;
+   }
+
+   // === Step 1: Build range from 16:55–17:10 server time ===
+   if (!rangeSet && ((serverHour == StartHour && serverMinute >= StartMinute) ||
+                     (serverHour == EndHour && serverMinute <= EndMinute))) {
+      double highM5 = iHigh(_Symbol, PERIOD_M5, 1);
+      double lowM5  = iLow(_Symbol, PERIOD_M5, 1);
+      rangeHigh = (rangeHigh == -1) ? highM5 : MathMax(rangeHigh, highM5);
+      rangeLow  = (rangeLow == -1) ? lowM5  : MathMin(rangeLow,  lowM5);
+   }
+
+   // === Step 2: Lock range and draw box once complete ===
+   if (!rangeSet && (serverHour == EndHour && serverMinute == EndMinute)) {
+      rangeSet = true;
+      Print("Range locked (NY 9:55–10:10) | High=", rangeHigh, " Low=", rangeLow);
+
+      // === Draw rectangle box on chart
+      long chartId = ChartID();
+      datetime boxStart = iTime(_Symbol, PERIOD_M5, 3); // 3 bars back = 16:55
+      datetime boxEnd   = iTime(_Symbol, PERIOD_M5, 0); // current bar = 17:10
+      string boxName = "RangeBox_" + IntegerToString((int)boxStart);
+
+      ObjectDelete(chartId, boxName);
+      ObjectCreate(chartId, boxName, OBJ_RECTANGLE, 0, boxStart, rangeHigh, boxEnd, rangeLow);
+      ObjectSetInteger(chartId, boxName, OBJPROP_COLOR, clrOrange);
+      ObjectSetInteger(chartId, boxName, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(chartId, boxName, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(chartId, boxName, OBJPROP_BACK, true);
+   }
+
+   // === Step 3: Entry logic after 17:10 server time ===
+   if (rangeSet && !tradePlaced && (serverHour > EndHour || (serverHour == EndHour && serverMinute > EndMinute))) {
+      double openM5  = iOpen(_Symbol, PERIOD_M5, 1);
+      double closeM5 = iClose(_Symbol, PERIOD_M5, 1);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+      bool breakoutLong  = closeM5 > rangeHigh && openM5 <= rangeHigh + _Point;
+      bool breakoutShort = closeM5 < rangeLow  && openM5 >= rangeLow  - _Point;
+
+      if (breakoutLong) {
+         double sl = rangeLow;
+         double entry = ask;
+         double risk = entry - sl;
+         if (risk <= 0) return;
+
+         double tp = entry + risk * RRRatio;
+         double lots = CalculateLots(risk);
+
+         if (trade.Buy(lots, _Symbol, entry, sl, tp, "Breakout Long")) {
+            tradePlaced = true;
+            Print("LONG PLACED | Entry=", entry, " SL=", sl, " TP=", tp, " Lots=", lots);
+         }
+      }
+
+      if (breakoutShort) {
+         double sl = rangeHigh;
+         double entry = bid;
+         double risk = sl - entry;
+         if (risk <= 0) return;
+
+         double tp = entry - risk * RRRatio;
+         double lots = CalculateLots(risk);
+
+         if (trade.Sell(lots, _Symbol, entry, sl, tp, "Breakout Short")) {
+            tradePlaced = true;
+            Print("SHORT PLACED | Entry=", entry, " SL=", sl, " TP=", tp, " Lots=", lots);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate trade size based on fixed dollar risk                 |
+//+------------------------------------------------------------------+
+double CalculateLots(double risk) {
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double dollarPerPoint = risk / tickSize * tickValue;
+   double lots = RiskPerTradeUSD / dollarPerPoint;
+
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+
+   lots = MathMax(MathMin(NormalizeDouble(lots, 2), maxLot), minLot);
+   return lots;
+}
