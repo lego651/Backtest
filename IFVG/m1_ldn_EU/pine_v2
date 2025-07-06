@@ -1,0 +1,152 @@
+//@version=5
+strategy("iFVG Long & Short (Fixed $1K Risk, $100K Start)", overlay=true,
+  default_qty_type=strategy.fixed, default_qty_value=0, initial_capital=100000)
+
+rMultiplier = 1.4
+riskPerTrade = 1000
+
+// === NY Time Window ===
+bar_hour_ny   = hour(time, "America/New_York")
+bar_minute_ny = minute(time, "America/New_York")
+inTimeRange   = (bar_hour_ny == 4 and bar_minute_ny >= 40) or (bar_hour_ny == 5 and bar_minute_ny <= 20)
+
+// === Daily Reset ===
+var int tradeCount = 0
+if ta.change(time("D")) != 0
+    tradeCount := 0
+
+// === Long Setup State ===
+var float pendingFvgHigh     = na
+var float pendingFvgLow      = na
+var bool waitingForIFVG      = false
+var bool watchLong           = false
+var bool seenPullbackLong    = false
+var int  bullCount           = 0
+var float slLong             = na
+
+// === Short Setup State ===
+var float pendingBearFvgHigh = na
+var float pendingBearFvgLow  = na
+var bool waitingForBearIFVG  = false
+var bool watchShort          = false
+var bool seenPullbackShort   = false
+var int  bearCount           = 0
+var float slShort            = na
+
+// === Detect Bearish FVG (for long) ===
+bearFVG = low[2] > high
+if bearFVG
+    pendingFvgHigh := high[2]
+    pendingFvgLow := low[2]
+    waitingForIFVG := true
+
+// === Confirm Bullish iFVG
+isBullishClose = close > open
+if waitingForIFVG and isBullishClose and close > pendingFvgHigh and inTimeRange
+    label.new(bar_index, high, "iFVG Long", style=label.style_label_down, color=color.blue)
+    watchLong := true
+    seenPullbackLong := false
+    bullCount := 0
+    slLong := pendingFvgLow
+    waitingForIFVG := false
+    pendingFvgHigh := na
+    pendingFvgLow := na
+
+// === Long Entry Logic
+if watchLong and inTimeRange
+    if close[1] < open[1] and close[1] < slLong and close < open and close < slLong
+        watchLong := false
+        seenPullbackLong := false
+        bullCount := 0
+
+    if not seenPullbackLong and close < open
+        seenPullbackLong := true
+        label.new(bar_index, low, "Pullback", color=color.gray)
+
+    if seenPullbackLong
+        if close > open
+            bullCount += 1
+            if bullCount == 1
+                label.new(bar_index, high, "1st Bull", color=color.yellow)
+            if bullCount == 2
+                label.new(bar_index, high, "2nd Bull (Entry)", color=color.green)
+                if tradeCount < 2
+                    if strategy.opentrades > 0
+                        strategy.close_all(comment="Cancel 1st for 2nd")
+
+                    // Risk/Qty logic
+                    risk = close - slLong
+                    qty = risk > 0 ? riskPerTrade / risk : na
+                    tp = close + (risk * rMultiplier)
+
+                    strategy.entry("Long", strategy.long, qty=qty)
+                    strategy.exit("TP/SL", from_entry="Long", stop=slLong, limit=tp)
+
+                    line.new(bar_index, slLong, bar_index + 5, slLong, color=color.red, style=line.style_dotted)
+                    line.new(bar_index, tp, bar_index + 5, tp, color=color.green, style=line.style_dotted)
+
+                    tradeCount += 1
+                    watchLong := false
+                    seenPullbackLong := false
+                    bullCount := 0
+        else
+            bullCount := 0
+
+// === Detect Bullish FVG (for short) ===
+bullFVG = high[2] < low
+if bullFVG
+    pendingBearFvgHigh := high[2]
+    pendingBearFvgLow := low[2]
+    waitingForBearIFVG := true
+
+// === Confirm Bearish iFVG
+isBearishClose = close < open
+if waitingForBearIFVG and isBearishClose and close < pendingBearFvgLow and inTimeRange
+    label.new(bar_index, low, "iFVG Short", style=label.style_label_up, color=color.red)
+    watchShort := true
+    seenPullbackShort := false
+    bearCount := 0
+    slShort := pendingBearFvgHigh
+    waitingForBearIFVG := false
+    pendingBearFvgHigh := na
+    pendingBearFvgLow := na
+
+// === Short Entry Logic
+if watchShort and inTimeRange
+    if close[1] > open[1] and close[1] > slShort and close > open and close > slShort
+        watchShort := false
+        seenPullbackShort := false
+        bearCount := 0
+
+    if not seenPullbackShort and close > open
+        seenPullbackShort := true
+        label.new(bar_index, high, "Pullback", color=color.gray)
+
+    if seenPullbackShort
+        if close < open
+            bearCount += 1
+            if bearCount == 1
+                label.new(bar_index, low, "1st Bear", color=color.orange)
+            if bearCount == 2
+                label.new(bar_index, low, "2nd Bear (Entry)", color=color.red)
+                if tradeCount < 2
+                    if strategy.opentrades > 0
+                        strategy.close_all(comment="Cancel 1st for 2nd")
+
+                    // Risk/Qty logic
+                    risk = slShort - close
+                    qty = risk > 0 ? riskPerTrade / risk : na
+                    tp = close - (risk * rMultiplier)
+
+                    strategy.entry("Short", strategy.short, qty=qty)
+                    strategy.exit("TP/SL", from_entry="Short", stop=slShort, limit=tp)
+
+                    line.new(bar_index, slShort, bar_index + 5, slShort, color=color.red, style=line.style_dotted)
+                    line.new(bar_index, tp, bar_index + 5, tp, color=color.green, style=line.style_dotted)
+
+                    tradeCount += 1
+                    watchShort := false
+                    seenPullbackShort := false
+                    bearCount := 0
+        else
+            bearCount := 0
